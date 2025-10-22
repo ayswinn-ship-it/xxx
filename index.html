@@ -1,0 +1,439 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Карта памятников — фото, аудио и ассистент</title>
+  <script src="https://api-maps.yandex.ru/2.1/?lang=ru_RU"></script>
+  <style>
+    html, body { height: 100%; margin: 0; }
+    #map { width: 100%; height: 100%; }
+
+    .assistant-toggle {
+      position: fixed; right: 16px; bottom: 16px; z-index: 1100;
+      border: none; border-radius: 999px; padding: 14px 18px;
+      box-shadow: 0 6px 20px rgba(0,0,0,.2); cursor: pointer;
+      font-weight: 600; background: #111827; color: #fff;
+    }
+
+    .assistant {
+      position: fixed; right: 16px; bottom: 76px; width: 340px; max-width: calc(100% - 32px);
+      background: #fff; border-radius: 16px; overflow: hidden; z-index: 1100;
+      box-shadow: 0 20px 60px rgba(17,24,39,.35); display: none;
+      border: 1px solid #e5e7eb;
+    }
+    .assistant.open { display: flex; flex-direction: column; height: 60vh; }
+    .assistant-header { display: flex; align-items: center; gap: 10px; padding: 12px 14px; background: #111827; color: #fff; }
+    .assistant-header h3 { margin: 0; font-size: 16px; font-weight: 700; }
+    .assistant-header small { opacity: .8; }
+    .assistant-messages { padding: 12px; overflow-y: auto; flex: 1; background: #f9fafb; }
+    .assistant-input { display: flex; gap: 8px; padding: 10px; border-top: 1px solid #e5e7eb; background: #fff; }
+    .assistant-input input { flex: 1; padding: 10px 12px; border-radius: 10px; border: 1px solid #e5e7eb; font-size: 14px; }
+    .assistant-input button { padding: 10px 12px; border-radius: 10px; border: none; background: #111827; color: #fff; font-weight: 600; cursor: pointer; }
+
+    .msg { margin: 8px 0; display: flex; }
+    .msg.user { justify-content: flex-end; }
+    .msg.user .bubble { background: #111827; color: #fff; border-bottom-right-radius: 4px; }
+    .msg.bot .bubble { background: #fff; color: #111827; border-bottom-left-radius: 4px; border: 1px solid #e5e7eb; }
+    .bubble { max-width: 85%; padding: 10px 12px; border-radius: 12px; font-size: 14px; line-height: 1.35; box-shadow: 0 6px 16px rgba(0,0,0,.06); }
+
+    .result-chip { display: inline-block; margin: 6px 6px 0 0; padding: 6px 10px; border-radius: 999px; border: 1px solid #e5e7eb; background: #fff; cursor: pointer; font-size: 12px; }
+    .result-chip:hover { background: #f3f4f6; }
+
+    .balloon { font-family: system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, "Helvetica Neue", Arial, "Noto Sans", "Apple Color Emoji", "Segoe UI Emoji"; }
+    .balloon h3 { margin: 0 0 6px; font-size: 16px; }
+    .balloon p { margin: 0 0 8px; font-size: 13px; color: #374151; }
+    .balloon .meta { font-size: 12px; color: #6b7280; margin-top: 6px; }
+    .balloon img { max-width: 100%; height: auto; border-radius: 12px; margin: 8px 0; display: block; }
+    .balloon audio { width: 100%; margin-top: 6px; }
+
+    @media (max-width: 480px) {
+      .assistant.open { width: calc(100% - 32px); height: 55vh; }
+    }
+  </style>
+</head>
+<body>
+  <div id="map"></div>
+
+  <button class="assistant-toggle" id="assistantToggle" aria-label="Открыть ассистента">Ассистент</button>
+  <section class="assistant" id="assistant">
+    <div class="assistant-header">
+      <div>
+        <h3>Ассистент по памятникам</h3>
+        <small>Спросите: «Медный всадник», «рядом», «Волгоград»…</small>
+      </div>
+    </div>
+    <div class="assistant-messages" id="assistantMessages"></div>
+    <div class="assistant-input">
+      <input id="assistantInput" type="text" placeholder="Найдите памятник по названию, городу или тегу…" />
+      <button id="assistantSend">Отправить</button>
+    </div>
+  </section>
+
+  <script>
+    // Данные о памятниках Якутска
+    const monuments = [
+      {
+        id: 'komsonol',
+        name: 'Комсомольцам',
+        city: 'Якутск',
+        coords: [62.0358, 129.7161],
+        photo: 'koms.jpg',
+        audio_RU: 'komsr.ogg',
+        audio_SAH: 'komss.ogg',
+        description: 'Саха сирин комсомолецтарын пааматынньыга 1920-с сыллардааҕы ыччат хамсааһынын бастакы активистарыгар анаммыт. Сэбиэскэй кэмҥэ регион сайдыытыгар уонна модернизациятыгар киллэрбит кылааттарын билинэн олохтоммута. Комсомолецтар Саха сирин үөрэҕириитигэр, промышленноһыгар уонна культуратыгар улахан оруоллаахтар. Монумент көлүөнэлэр утумнаахтык олорууларын уонна төрөөбүт дойдубутугар сулууспалааһыны көрдөрөр. Бу идеялара, үлэтэ САХА Сирин XX үйэҕэ уларыта тутууга көмөлөспүт эдэр энтузиасттары өйдүүр сир.',
+        tags: ['комсомол','история']
+      },
+      
+      {
+        id: 'mammoth',
+        name: 'Мамонт',
+        city: 'Якутск',
+        coords: [62.010722, 129.661971],
+        photo: 'mammst.webp',
+        audio_RU: 'mamstr.ogg',
+        audio_SAH: 'mamsts.ogg',
+        description: 'Памятник мамонту в Якутске — это яркая и популярная достопримечательность города. Он расположен на площади рядом с главным зданием Академии наук республики. Скульптура изображает семью мамонтов в натуральную величину: взрослых животных и детёныша. Памятник символизирует богатую палеонтологическую историю Якутии, известную как «кладовая мамонтовой фауны». Это излюбленное место для фотографий туристов и горожан.Дьокуускайга мамонт пааматынньыга-куорат чаҕылхай, киэҥник биллэр-көстөр кэрэхсэбиллээх сирэ. Кини республика наукаларын Академиятын сүрүн дьиэтин аттынааҕы болуоссакка турар. Скульптураҕа дьиҥнээх кээмэйдээх мамонт дьиэ кэргэнин: улахан сүөһүнү, оҕону көрдөрөр. Пааматынньык «мамонт фаунатын кладовайа»диэн аатырбыт Саха сирин баай палеонтологическай историятын кэрэһилиир. Бу туристар уонна куорат олохтоохторо хаартыскаҕа түһэриилэригэр сөбүлүүр сир.   ',
+        tags: ['мамонт','символ']
+      },
+      {
+        id: 'geroi',
+        name: 'Мемориальная стела в честь якутян-героев',
+        city: 'Якутск',
+        coords: [62.038517, 129.75489],
+        photo: 'vov.webp',
+        audio_RU: 'vovr.ogg',
+        audio_SAH: 'vovr.ogg',
+        description: 'Мемориал Победы в Якутске – это монументальный комплекс на берегу Лены. Центр – 40-метровый обелиск в виде тюсюлгэ (якутской коновязи) и фигура воина-якута. Вечный огонь, стелы с именами павших, образцы военной техники. Мемориал символизирует вклад Якутии в Победу, гармонично соединяя советскую символику с национальными мотивами. Это главное место памяти в республике.Дьокуускайга Кыайыы мемориала-Өлүөнэ кытылыгар баар монументальнай комплекс. Киинэ-түөлгэ (якутскай коновязь) курдук 40 миэтэрэлээх обелиск уонна саха буойун дьүһүнэ. Үйэлээх уот, өлбүттэр ааттара стелалар, байыаннай техника холобурдара. Мемориал советскай символиканы национальнай матыыптары кытта дьүөрэлээн Саха Сирин Кыайыыга киллэрбит кылаатын көрдөрөр. Бу республикаҕа өй-санаа сүрүн миэстэтэ.',
+        tags: ['герои','память']
+      },
+     
+      {
+        id: 'kulakovskiy',
+        name: 'Алексей Кулаковский',
+        city: 'Якутск',
+        coords: [62.022978, 129.720638],
+        photo: 'kulak.jpg',
+        audio_RU: 'kulakr.ogg',
+        audio_SAH: 'kulakr.ogg',
+        description: 'Памятник Николаю Кулаковскому — якутскому просветителю, писателю и учёному. Место: Площадь Дружбы, Якутск. Внешний вид: Бронзовая скульптура, где Кулаковский сидит на скамье со свитком в руках.. Особенность: Можно присесть рядом на скамейку — памятник создан для диалога. Идея: Символизирует мудрость, просвещение и связь с культурой Якутии. Установлен в 2022 году к 150-летию со дня рождения Кулаковского. дня рождения Кулаковского.Николай Кулаковскай пааматынньыга-саха сырдатааччыта, суруйааччыта уонна учуонайа.· Миэстэ: Доҕордоһуу Болуоссата, Дьокуускай. Тас көстүү: Кулаковскай илиитигэр свиткалаах ыскамыайкаҕа олорор Боруонса скульптурата. Уратыта: аттыгар ыскамыайкаҕа олоруохха Сөп-пааматынньык кэпсэтиигэ анаммыт. Идея: саха сирин культуратын кытта муудараһы, сырдатыыны Уонна сибээһи Көрдөрөр. 2022 с.Кулаковскай төрөөбүтэ 150 сылыгар анаммыт.',
+        tags: ['писатель','просветитель']
+      },
+      {
+        id: 'oyunskiy',
+        name: 'Платон Ойуунский',
+        city: 'Якутск',
+        coords: [62.034063, 129.74258],
+        photo: 'oyn.jpeg',
+        audio_RU: 'oynr.ogg',
+        audio_SAH: 'oyns.ogg',
+        description: 'Платон Ойунский: Светоч якутского народа Платон Алексеевич Ойунский выдающийся якутский писатель, учёный-филолог и государственный деятель, чьё имя стало символом возрождения и развития Якутии в XX веке.Главные заслуги:·Писатель и поэт: Он является основоположником современной якутской литературы. Его самое известное произведение — роман в стихах «Красный шаман», ставший литературным манифестом новой эпохи. Государственный деятель: Он сыграл ключевую роль в образовании Якутской АССР в 1922 году и стал её первым руководителем.Платон Ойуунускай: саха норуотун Сырдыга Платон Алексеевич Ойуунускай саха уһулуччулаах суруйааччыта, филолог-учуонай уонна судаарыстыбаннай деятелэ, аата XX үйэҕэ Саха сирэ тиллибитин уонна сайдыытын бэлиэтэ буолбута. Сүрүн өҥөлөрө: Суруйааччы уонна поэт: кини аныгы саха литературатын төрүттээччи буолар. Кини саамай биллэр айымньыта-саҥа үйэ литературнай манифеһэ буолбут «Кыһыл ойуун» хоһооннордоох роман. Государственнай деятель: Кини 1922 сыллаахха Саха АССР тэриллиитигэр сүрүн оруолу ылан, бастакы салайааччыта буолбута.',
+        tags: ['писатель','деятель']
+      },
+      {
+        id: 'ammosov',
+        name: 'Максим Аммосов',
+        city: 'Якутск',
+        coords: [62.020773, 129.712307],
+        photo: 'amm.jpg',
+        audio_RU: 'ammr.ogg',
+        audio_SAH: 'ammr.ogg',
+        description: 'Максим Кирович Аммосов — выдающийся политический и государственный деятель Якутии, один из создателей Якутской АССР. С его именем связаны важнейшие мероприятия первых лет Советской власти в Якутии: укрепление власти и создание её органов на местах, аграрная реформа, национализация крупных частных предприятий, образование Якутской АССР, проведение НЭПа, начало осуществления кооперативного плана, культурной революции, электрификации и индустриализации.Максим Кирович Аммосов-саха сирин уһулуччулаах политическай уонна государственнай деятелэ, Саха АССР тэрийээччилэриттэн биирдэстэрэ. Кини аатынан Саха Сиригэр Сэбиэскэй былаас бастакы сылларын тутаах дьаһаллара сибээстээхтэр: былааһы бөҕөргөтүү уонна кини органнарын миэстэтигэр тэрийии, аграрнай реформа, бөдөҥ чааһынай тэрилтэлэри национализациялааһын, Саха АССР-ны тэрийии, Нэп ыытыы, кооператив былаанын, культурнай революцияны, электрификацияны уонна индустриализацияны олоххо киллэрии саҕаланыыта.',
+        tags: ['деятель','политика']
+      },
+      {
+        id: 'dezhnev',
+        name: 'Семён Дежнёв и Абакайда Сючу',
+        city: 'Якутск',
+        coords: [62.030716, 129.722924],
+        photo: 'dejnev.jpg',
+        audio_RU: 'dejnevr.ogg',
+        audio_SAH: 'dejnevr.ogg',
+        description: 'Историческая справка: Установлен в 2012 году как символ дружбы русского и якутского народов. Абакайда - дочь якутского тойона, Софрон Сыранов - русский казак.Описание: Скульптурная композиция изображает момент встречи двух культур. Памятник символизирует мирное сосуществование и взаимное обогащение культур.',
+        tags: ['исследователь','дружба']
+      },
+      {
+        id: 'lenin',
+        name: 'В.И. Ленин',
+        city: 'Якутск',
+        coords: [62.027835, 129.731102],
+        photo: 'lenin.jpg',
+       audio_RU: 'leninr.ogg',
+        audio_SAH: 'lenins.ogg',
+        description: 'Площадь Ленина в Якутске — историческое место, где в разные периоды располагались Гостиный двор, улица Большая, здания Якутского обкома КПСС и другие объекты. Имя Ленина площадь получила в 1957 году в честь 325-летия вхождения Якутии в состав России. В 1967 году здесь установили памятник В. И. Ленину. В 2024 году площадь преобразилась и была переименована в Площадь Республики.Дьокуускайга ленин болуоссата-историческай миэстэ, араас кэмнэргэ Гостинай тиэргэн, Улахан уулусса, ССКП Дьокуускайдааҕы обкомун дьиэлэрэ уонна да атын объектар бааллара. Ленин аатын болуоссат 1957 сыллаахха Саха Сирэ Россия састаабыгар киирбитэ 325 сылын көрсө ылбыта. 1967 сыллаахха манна В.И. Ленин пааматынньыгын туруорбуттара. 2024 сыллаахха болуоссат уларыйан Республика Болуоссата диэн ааттаммыта.',
+        tags: ['ленин','история']
+      },
+      {
+        id: 'merzlota',
+        name: 'Царство вечной мерзлоты',
+        city: 'Якутск',
+        coords: [62.044216, 129.62449],
+        photo: 'ice.webp',
+        audio_RU: 'icer.ogg',
+        audio_SAH: 'ices.ogg',
+        description: 'Царство вечной мерзлоты» в Якутске — уникальный туристический комплекс, расположенный внутри горы Чочур-Муран. Открыт в 2005 году, работает круглогодично. Комплекс включает в себя выставку ледяных скульптур, палеонтологическую экспозицию, ледяной бар и другие аттракционы. Среди экспонатов — фигуры людей и животных, персонажи мультфильмов «Ледниковый период» и «Игра престолов». В комплексе есть тронный зал властелина холода Чысхаана, церемониальный зал для национальных обрядов, ледяная горка и кёрлинговая дорожка. В «Царстве вечной мерзлоты» установлен почтовый ящик Деда Мороза, из которого ежегодно 1 декабря он лично забирает письма.Үйэлээх тоҥ саарыстыбата " Дьокуускайга Чочур-Муран хайатын иһигэр баар ураты туристическай комплекс. 2005 сыллаахха аһыллыбыт, сылы эргиччи үлэлиир. Комплекска муус скульптураларын быыстапката, палеонтологическай экспозиция, муус бар уонна да атын аттракционнар киирэллэр. Экспонаттар ортолоругар дьоннор уонна сүөһү дьүһүннэрэ, «Муус кэмэ» уонна «престол Оонньуута»мультфильм персонажтара бааллар. Комплекска тымныы тойон Чысхаан троннай саалата, национальнай сиэргэ-туомҥа церемониялаах саалата, муус хайыһар уонна керлинг суола бааллар. "Үйэлээх муус Саарыстыбатыгар" Тымныы Эһэ почта дьааһыга туруоруллубут, онтон сыл аайы ахсынньы 1 күнүгэр суруктары тус бэйэтэ ылар.',
+        tags: ['мерзлота','туризм']
+      },
+      {
+        id: 'mammoth-museum',
+        name: 'Музей мамонта',
+        city: 'Якутск',
+        coords: [62.017106, 129.704676],
+        photo: 'mam.jpeg',
+        audio_RU: 'mamr.ogg',
+        audio_SAH: 'mams.ogg',
+        description: 'Музей мамонта им. П. А. Лазарева в Якутске — научно-культурное учреждение, посвящённое изучению мамонтовой фауны и её среды обитания в ледниковый период. Основан в 1991 году, коллекция насчитывает более 3000 экспонатов.Дьокуускайга мамонт пааматынньыга-куорат чаҕылхай, киэҥник биллэр-көстөр кэрэхсэбиллээх сирэ. Кини республика наукаларын Академиятын сүрүн дьиэтин аттынааҕы болуоссакка турар. Скульптураҕа дьиҥнээх кээмэйдээх мамонт дьиэ кэргэнин: улахан сүөһүнү, оҕону көрдөрөр. Пааматынньык «мамонт фаунатын кладовайа»диэн аатырбыт Саха сирин баай палеонтологическай историятын кэрэһилиир. Бу туристар уонна куорат олохтоохторо хаартыскаҕа түһэриилэригэр сөбүлүүр сир.',
+        tags: ['музей','мамонт']
+      },
+      {
+        id: 'lenin-square',
+        name: 'Площадь Ленина',
+        city: 'Якутск',
+        coords: [62.027123, 129.732512],
+        photo: 'len.jpg',
+        audio_RU: 'PTT-20251021-WA0016.opus',
+        audio_SAH: 'PTT-20251021-WA0016.opus',
+        description: 'Площадь Ленина в Якутске — историческое место, где в разные периоды располагались Гостиный двор, улица Большая, здания Якутского обкома КПСС и другие объекты. Имя Ленина площадь получила в 1957 году в честь 325-летия вхождения Якутии в состав России. В 1967 году здесь установили памятник В. И. Ленину. В 2024 году площадь преобразилась и была переименована в Площадь Республики.Дьокуускайга ленин болуоссата-историческай миэстэ, араас кэмнэргэ Гостинай тиэргэн, Улахан уулусса, ССКП Дьокуускайдааҕы обкомун дьиэлэрэ уонна да атын объектар бааллара. Ленин аатын болуоссат 1957 сыллаахха Саха Сирэ Россия састаабыгар киирбитэ 325 сылын көрсө ылбыта. 1967 сыллаахха манна В.И. Ленин пааматынньыгын туруорбуттара. 2024 сыллаахха болуоссат уларыйан Республика Болуоссата диэн ааттаммыта.',
+        tags: ['площадь','центр']
+      }
+    ];
+
+    const placemarkById = new Map();
+
+    const norm = (s) => (s || '').toString().toLowerCase().replace(/ё/g,'е').trim();
+
+    ymaps.ready(init);
+    
+    function init() {
+      const map = new ymaps.Map('map', {
+        center: [62.0278, 129.7312],
+        zoom: 13,
+        controls: ['zoomControl', 'typeSelector', 'fullscreenControl']
+      }, {
+        suppressMapOpenBlock: true
+      });
+
+      const clusterer = new ymaps.Clusterer({
+        preset: 'islands#invertedBlueClusterIcons',
+        groupByCoordinates: false,
+        clusterDisableClickZoom: false,
+        clusterOpenBalloonOnClick: true
+      });
+
+      const placemarks = monuments.map((m) => createPlacemark(m));
+      clusterer.add(placemarks);
+      map.geoObjects.add(clusterer);
+
+      if (placemarks.length) {
+        const bounds = clusterer.getBounds();
+        if (bounds) map.setBounds(bounds, { checkZoomRange: true, zoomMargin: 30 });
+      }
+
+      window.app = { map, clusterer };
+
+      addBotMessage(
+        'Привет! Я помогу найти памятники Якутска. Например, попробуйте: <br>\
+        • <b>Мамонт</b> <br>\
+        • <b>Площадь Ленина</b> <br>\
+        • <b>рядом</b> — покажу ближайшие к центру карты.'
+      );
+    }
+
+    function balloonHTML(m) {
+      const photo = m.photo ? `<img src="${m.photo}" alt="${m.name}">` : '';
+      const audio_ru = m.audio_RU ? `
+  <div style="margin: 10px 0;">
+    <strong>Русский:</strong>
+    <audio controls preload="none" style="width: 100%; margin-top: 5px;">
+      <source src="${m.audio_RU}" type="audio/mpeg">
+    </audio>
+  </div>` : '';
+
+const audio_sah = m.audio_SAH ? `
+  <div style="margin: 10px 0;">
+    <strong>Якутский:</strong>
+    <audio controls preload="none" style="width: 100%; margin-top: 5px;">
+      <source src="${m.audio_SAH}" type="audio/mpeg">
+    </audio>
+  </div>` : '';
+
+const audio = (m.audio_RU || m.audio_SAH) ? `
+  <div style="margin: 15px 0;">
+    <h4>Аудио-гид:</h4>
+    ${audio_ru}
+    ${audio_sah}
+  </div>` : '';
+      const desc = m.description ? `<p>${escapeHTML(m.description)}</p>` : '';
+      const city = m.city ? `<div class="meta">${escapeHTML(m.city)}</div>` : '';
+      return `<div class="balloon">
+        <h3>${escapeHTML(m.name)}</h3>
+        ${desc}
+        ${photo}
+        ${audio}
+        ${city}
+      </div>`;
+    }
+
+    function escapeHTML(s){
+      const div = document.createElement('div');
+      div.textContent = s;
+      return div.innerHTML;
+    }
+
+    function createPlacemark(m) {
+      const pm = new ymaps.Placemark(m.coords, {
+        balloonContent: balloonHTML(m),
+        hintContent: m.name
+      }, {
+        preset: 'islands#blueIcon',
+        hideIconOnBalloonOpen: false,
+        balloonPanelMaxMapArea: 0
+      });
+      
+      pm.events.add('balloonopen', () => {
+        pauseAllAudiosExceptInBalloon();
+      });
+      
+      placemarkById.set(m.id, pm);
+      return pm;
+    }
+
+    function pauseAllAudiosExceptInBalloon(){
+      document.querySelectorAll('audio').forEach(a => { 
+        try { a.pause(); } catch(_){} 
+      });
+    }
+
+    const $assistant = document.getElementById('assistant');
+    const $toggle = document.getElementById('assistantToggle');
+    const $messages = document.getElementById('assistantMessages');
+    const $input = document.getElementById('assistantInput');
+    const $send = document.getElementById('assistantSend');
+
+    $toggle.addEventListener('click', () => {
+      $assistant.classList.toggle('open');
+      if ($assistant.classList.contains('open')) $input.focus();
+    });
+
+    $send.addEventListener('click', handleQuery);
+    $input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') handleQuery();
+    });
+
+    function addUserMessage(html){ addMessage('user', html); }
+    function addBotMessage(html){ addMessage('bot', html); }
+    
+    function addMessage(role, html){
+      const wrap = document.createElement('div');
+      wrap.className = `msg ${role}`;
+      const bubble = document.createElement('div');
+      bubble.className = 'bubble';
+      bubble.innerHTML = html;
+      wrap.appendChild(bubble);
+      $messages.appendChild(wrap);
+      $messages.scrollTop = $messages.scrollHeight;
+    }
+
+    function handleQuery(){
+      const q = $input.value.trim();
+      if (!q) return; 
+      $input.value = '';
+      addUserMessage(escapeHTML(q));
+
+      const qn = norm(q);
+
+      if (qn === '/help' || qn === 'помощь' || qn === 'справка') {
+        addBotMessage('Могу искать по названию, городу и тегам. Примеры: <b>Мамонт</b>, <b>Площадь Ленина</b>, или скажите <b>рядом</b>.');
+        return;
+      }
+
+      if (qn.includes('рядом') || qn.includes('около') || qn.includes('ближай')) {
+        return showNearest();
+      }
+
+      const results = searchMonuments(qn);
+      if (results.length === 0) {
+        addBotMessage('Ничего не нашёл. Попробуйте другое слово или название памятника.');
+        return;
+      }
+
+      if (results.length === 1) {
+        focusMonument(results[0].item);
+        addBotMessage(`Нашёл: <b>${escapeHTML(results[0].item.name)}</b>. Открыл балун на карте.`);
+        return;
+      }
+
+      const chips = results.slice(0,6).map(r =>
+        `<span class="result-chip" data-id="${r.item.id}">${escapeHTML(r.item.name)}</span>`
+      ).join('');
+      addBotMessage(`Нашёл несколько вариантов:<br>${chips}`);
+
+      requestAnimationFrame(() => {
+        document.querySelectorAll('.result-chip').forEach(chip => {
+          chip.addEventListener('click', () => {
+            const id = chip.getAttribute('data-id');
+            const found = monuments.find(m => m.id === id);
+            if (found) {
+              focusMonument(found);
+            }
+          });
+        });
+      });
+    }
+
+    function searchMonuments(qn){
+      const scored = [];
+      for (const m of monuments){
+        const fields = [m.name, m.city, (m.tags || []).join(' '), m.description];
+        const text = norm(fields.filter(Boolean).join(' \n '));
+        let score = 0;
+        if (text.includes(qn)) score += 3;
+        qn.split(/\s+/).forEach(tok => { 
+          if (tok && text.includes(tok)) score += 1; 
+        });
+        if (score > 0) scored.push({ item: m, score });
+      }
+      scored.sort((a, b) => b.score - a.score);
+      return scored;
+    }
+
+    function showNearest(){
+      const { map } = window.app;
+      const center = map.getCenter();
+      const withDist = monuments.map(m => ({ 
+        m, 
+        d: ymaps.coordSystem.geo.getDistance(center, m.coords) || Infinity 
+      }));
+      withDist.sort((a, b) => a.d - b.d);
+      const top = withDist.slice(0,3).map(x => x.m);
+      if (!top.length){ 
+        addBotMessage('Пока нет данных о ближайших объектах.'); 
+        return; 
+      }
+      const chips = top.map(m => 
+        `<span class="result-chip" data-id="${m.id}">${escapeHTML(m.name)}</span>`
+      ).join('');
+      addBotMessage(`Ближайшие к центру карты:<br>${chips}`);
+      
+      requestAnimationFrame(() => {
+        document.querySelectorAll('.result-chip').forEach(chip => {
+          chip.addEventListener('click', () => {
+            const id = chip.getAttribute('data-id');
+            const found = monuments.find(m => m.id === id);
+            if (found) focusMonument(found);
+          });
+        });
+      });
+    }
+
+    function focusMonument(m){
+      const { map } = window.app;
+      map.setCenter(m.coords, 16, { duration: 300 });
+      const pm = placemarkById.get(m.id);
+      if (pm) {
+        pm.balloon.open();
+      }
+    }
+  </script>
+</body>
+</html>
